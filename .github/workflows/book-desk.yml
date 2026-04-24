@@ -1,0 +1,45 @@
+name: Twice-weekly Desk Booking
+
+on:
+  schedule:
+    - cron: '1 22 * * 2'  # runs Tue 22:01 UTC -> Wed 00:01 Europe/Warsaw
+    - cron: '1 22 * * 3'  # runs Wed 22:01 UTC -> Thu 00:01 Europe/Warsaw
+  workflow_dispatch:
+    inputs:
+      manual_date:
+        description: 'Optional YYYY-MM-DD to override computed booking date'
+        required: false
+
+jobs:
+  book-desk:
+    runs-on: ubuntu-latest
+    env:
+      BOOKER_EMAIL: ${{ secrets.BOOKER_EMAIL }}
+      BOOKER_PASSWORD: ${{ secrets.BOOKER_PASSWORD }}
+      BOOKING_URL: ${{ secrets.BOOKING_URL }}
+      BOOKER_DESK: ${{ secrets.BOOKER_DESK }}  # optional, default "08" in script
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install playwright
+          playwright install --with-deps
+
+      - name: Run booking script
+        id: run_booking
+        run: |
+          # If manual_date input provided, export BOOKING_DATE for the script to use
+          if [ -n "${{ github.event.inputs.manual_date }}" ]; then
+            echo "Using manual override BOOKING_DATE=${{ github.event.inputs.manual_date }}"
+            echo "BOOKING_DATE=${{ github.event.inputs.manual_date }}" >> $GITHUB_ENV
+          fi
+          python scripts/book_desk.py
