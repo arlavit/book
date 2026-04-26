@@ -2,8 +2,8 @@ name: Twice-weekly Desk Booking
 
 on:
   schedule:
-    - cron: '1 22 * * 2'  # runs Tue 22:01 UTC -> Wed 00:01 Europe/Warsaw
-    - cron: '1 22 * * 3'  # runs Wed 22:01 UTC -> Thu 00:01 Europe/Warsaw
+    - cron: '1 22 * * 2'
+    - cron: '1 22 * * 3'
   workflow_dispatch:
     inputs:
       manual_date:
@@ -17,7 +17,9 @@ jobs:
       BOOKER_EMAIL: ${{ secrets.BOOKER_EMAIL }}
       BOOKER_PASSWORD: ${{ secrets.BOOKER_PASSWORD }}
       BOOKING_URL: ${{ secrets.BOOKING_URL }}
-      BOOKER_DESK: ${{ secrets.BOOKER_DESK }}  # optional, default "08" in script
+      BOOKER_DESK: ${{ secrets.BOOKER_DESK }}
+      BOOKER_TIMEZONE: ${{ secrets.BOOKER_TIMEZONE }}
+      BOOKER_OFFICE: ${{ secrets.BOOKER_OFFICE }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -34,12 +36,14 @@ jobs:
           pip install playwright
           playwright install --with-deps
 
+      - name: Prepare manual date override
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          if [ -n "${{ github.event.inputs.manual_date }}" ]; then
+            echo "BOOKING_DATE=${{ github.event.inputs.manual_date }}" >> $GITHUB_ENV
+          fi
+
       - name: Run booking script
         id: run_booking
         run: |
-          # If manual_date input provided, export BOOKING_DATE for the script to use
-          if [ -n "${{ github.event.inputs.manual_date }}" ]; then
-            echo "Using manual override BOOKING_DATE=${{ github.event.inputs.manual_date }}"
-            echo "BOOKING_DATE=${{ github.event.inputs.manual_date }}" >> $GITHUB_ENV
-          fi
           python scripts/book_desk.py
