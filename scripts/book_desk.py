@@ -1,35 +1,53 @@
 # scripts/book_desk.py
 from playwright.sync_api import sync_playwright
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import os
 import sys
 
-# Read secrets from environment variables (set these as GitHub Actions secrets)
+# Required secrets from environment variables
 EMAIL = os.environ.get("BOOKER_EMAIL")
 PASSWORD = os.environ.get("BOOKER_PASSWORD")
 BOOKING_URL = os.environ.get("BOOKING_URL")
-DESK_ID = os.environ.get("BOOKER_DESK", "08")  # default desk 08
+DESK_ID = os.environ.get("BOOKER_DESK", "08")
 
-# Fail fast if secrets are missing
+# Timezone and office moved to environment so no literals remain in the repo
+BOOKER_TIMEZONE = os.environ.get("BOOKER_TIMEZONE")
+BOOKER_OFFICE = os.environ.get("BOOKER_OFFICE")
+
+# Optional manual override for booking date in YYYY-MM-DD format
+BOOKING_DATE = os.environ.get("BOOKING_DATE")
+
+# Fail fast if required secrets are missing
 if not EMAIL or not PASSWORD or not BOOKING_URL:
     sys.exit("Missing BOOKER_EMAIL, BOOKER_PASSWORD, or BOOKING_URL environment variable")
 
-# Compute Warsaw local date at runtime and add 14 days
-warsaw_tz = ZoneInfo("Europe/Warsaw")
-today_warsaw = datetime.now(warsaw_tz).date()
-TARGET_DATE = today_warsaw + timedelta(days=14)
+if not BOOKER_TIMEZONE:
+    sys.exit("Missing BOOKER_TIMEZONE environment variable")
 
-# Optional: ensure TARGET_DATE weekday matches run intent (not strictly necessary)
-# day_name = TARGET_DATE.strftime('%A')
-day_str = f"{TARGET_DATE.day:02d}.{TARGET_DATE.month:02d}"  # "DD.MM"
+if not BOOKER_OFFICE:
+    sys.exit("Missing BOOKER_OFFICE environment variable")
+
+# Compute target date
+if BOOKING_DATE:
+    try:
+        TARGET_DATE = datetime.fromisoformat(BOOKING_DATE).date()
+    except Exception:
+        sys.exit("Invalid BOOKING_DATE format; expected YYYY-MM-DD")
+else:
+    tz = ZoneInfo(BOOKER_TIMEZONE)
+    today_local = datetime.now(tz).date()
+    TARGET_DATE = today_local + timedelta(days=14)
+
+day_str = f"{TARGET_DATE.day:02d}.{TARGET_DATE.month:02d}"
 day_name = TARGET_DATE.strftime('%A')
 
-print(f"Local Warsaw date now: {today_warsaw.isoformat()}")
-print(f"Booking target date (Warsaw +14d): {TARGET_DATE.isoformat()} ({day_name} {day_str})")
+# Print only non-secret operational info
+print(f"Local date now: {datetime.now(ZoneInfo(BOOKER_TIMEZONE)).date().isoformat()}")
+print(f"Booking target date: {TARGET_DATE.isoformat()} {day_name} {day_str}")
 print(f"Booking desk {DESK_ID} for {day_name} {day_str}...")
 
-# Canvas and click coordinates (keep your existing values)
+# Canvas and click coordinates
 CANVAS_X, CANVAS_Y = 33.5, 97.1875
 CANVAS_W, CANVAS_H = 1198, 650
 DESK_08_CLICK_X = CANVAS_X + 0.69736981 * CANVAS_W
@@ -57,25 +75,26 @@ with sync_playwright() as p:
             except:
                 pass
         print("✅ Logged in")
-        # Select Warszawa Inflancka
+
+        # Navigate to booking page and select office using env value
         page.goto(BOOKING_URL, wait_until="networkidle", timeout=30000)
         page.wait_for_timeout(2000)
         page.locator('[class*="dropdown"]').first.click()
         page.wait_for_timeout(500)
-        page.click('text=Warszawa Inflancka')
+        page.click(f'text={BOOKER_OFFICE}')
         page.wait_for_timeout(2000)
-        # Check if target date is in the window
+
+        # Check if target date is in the booking window
         body = page.inner_text('body')
         if day_str not in body:
-            print(f"❌ {day_str} is NOT yet in the booking window (still outside 14 days)")
+            print(f"❌ {day_str} is NOT yet in the booking window")
             print("Window contents (dates visible):")
             for line in body.split('\n'):
                 l = line.strip()
                 if len(l) == 5 and l[2] == '.' and l[:2].isdigit():
                     print(f"  {l}")
         else:
-            print(f"✅ {day_str} is in the booking window!")
-            # Find the CHOOSE button row for the target date
+            print(f"✅ {day_str} is in the booking window")
             rows = page.locator('[data-day-type="deskAvailable"]')
             target_row = None
             for i in range(rows.count()):
@@ -83,33 +102,30 @@ with sync_playwright() as p:
                     target_row = rows.nth(i)
                     break
             if not target_row:
-                print(f"ℹ️  No CHOOSE button for {day_str} — may already be booked or unavailable")
-                # Check if already booked
+                print(f"ℹ️  No CHOOSE button for {day_str}")
                 if f'{DESK_ID} is yours' in body and day_str in body:
-                    print("✅ Already booked!")
+                    print("✅ Already booked")
             else:
-                # Click CHOOSE
                 try:
                     target_row.locator('button:has-text("CHOOSE")').click()
                 except:
                     target_row.locator('button:has-text("Choose")').click()
                 page.wait_for_timeout(3000)
-                # Click desk coordinates (adjust if DESK_ID changes)
                 page.mouse.click(DESK_08_CLICK_X, DESK_08_CLICK_Y)
                 page.wait_for_timeout(1500)
                 modal = page.inner_text('body')[:600]
-                if f'Selected desk: Warszawa Inflancka / {DESK_ID}' in modal:
-                    print(f"✅ Desk {DESK_ID} selected!")
+                if f'Selected desk: {BOOKER_OFFICE} / {DESK_ID}' in modal:
+                    print(f"✅ Desk {DESK_ID} selected")
                     page.click('button:has-text("BOOK THIS DESK")')
                     page.wait_for_timeout(4000)
-                    print("🎉 Booking submitted!")
+                    print("🎉 Booking submitted")
                     after = page.inner_text('body')
                     if f'{DESK_ID} is yours' in after:
-                        print(f"🎉 CONFIRMED: Desk {DESK_ID} booked for {day_name} {day_str}!")
+                        print(f"🎉 CONFIRMED: Desk {DESK_ID} booked for {day_name} {day_str}")
                     else:
                         print("⚠️ Check site to confirm")
                 else:
-                    print(f"❌ Desk {DESK_ID} not selectable — taken by a colleague")
+                    print(f"❌ Desk {DESK_ID} not selectable")
                     try:
                         page.click('button:has-text("CANCEL")', timeout=2000)
                     except:
